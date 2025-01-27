@@ -11,7 +11,7 @@ import (
 )
 
 //to find where the payload ends in a jwt
-func TestHandleAuth(t *testing.T){
+func TestHandleAuthUnexpired(t *testing.T){
 	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/auth", nil)
 	if err != nil{
 		t.Error(err)
@@ -45,7 +45,7 @@ func TestHandleAuth(t *testing.T){
 	}
 	secondIndex = firstIndex + secondIndex + 1
 	rawPayload := body[firstIndex + 1:secondIndex]
-	//Apparently base64 strings require padding so if the length is not a multiple of 4
+	//Apparently base64 strings require padding if the length is not a multiple of 4
 	if len(rawPayload)%4 != 0 {
 		rawPayload = rawPayload + strings.Repeat("=", 4-len(rawPayload)%4)
 	}

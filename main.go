@@ -1,32 +1,31 @@
 package main
 
 /* TODO:
-- Write Tests (look into fuzzing)
-- Figure out if the post request will have parameters??
-- Organize into different files
+- Write remaining tests
+- gradebot error: token is unverifiable: error while executing keyfunc: the given key ID was not found in the JWKS
 */
 
 import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
-	"math/big"
 	"net/http"
 
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
+	//"github.com/google/uuid"
 )
 
 type JWK struct{
 	Alg string `json:"alg"` //algorithm intended for use with the key (RS256)
 	Kty string `json:"kty"` //algorithm family used with the key (this will be RSA)
-	N *big.Int `json:"n"`//rsa modulus
-	E int `json:"e"`//rsa public exponent
-	Kid uuid.UUID `json:"kid"` //key id 
+	N string `json:"n"`//rsa modulus
+	E string `json:"e"`//rsa public exponent
+	Kid string `json:"kid"` //key id 
 	Exp time.Time `json:"exp"`
 }
 type JWKS struct{
@@ -35,19 +34,22 @@ type JWKS struct{
 
 //global keys variable 
 var keys []JWK
+var id int = 0
 
 func NewJWK(public rsa.PublicKey)JWK{
+	//i want an incrementing kid. 
+	id += 1
 	return JWK{
 		"RS256", //alg
 		"RSA", //kty
-		public.N, //N
-		public.E, //E
-		uuid.New(), //kid, RFC 7517 example A.1 uses a date here
-		time.Now().AddDate(0, 0, 1), //expiration date, set for a day from now
+		public.N.String(), //N
+		fmt.Sprintf("%d",public.E), //E
+		fmt.Sprintf("%d", id), //kid, RFC 7517 example A.1 uses a date here
+		time.Now().Add(5 * time.Minute), //expiration date, set for a day from now
 	}
 }
 
-func keyIsExpired(key JWK)bool{
+func isKeyExpired(key JWK)bool{
 	//returns true if key is expired
 	return time.Now().After(key.Exp)
 }
@@ -74,6 +76,11 @@ func generateJWT(expired bool)(string, *rsa.PublicKey){
 			IssuedAt: jwt.NewNumericDate(time.Now()),
 		})
 	privk, _ := generateRSAKeys()
+	
+	a := NewJWK(privk.PublicKey)
+	token.Header["kid"]= a.Kid
+
+	keys = append(keys, a)
 	str, err := token.SignedString(privk)
 	if err != nil{
 		log.Fatal(err)
@@ -97,8 +104,11 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 	if _, ok := params["expired"]; !ok{
 		
 		tokenstr, _ := generateJWT(false)
-		encoder.Encode(tokenstr)
-	}else{ //localhost:8080/auth?expired
+		data := map[string]interface{}{
+			"jwt": tokenstr,
+		}
+		encoder.Encode(data)
+	}else{ //localhost:8080/auth?expired=true
 		tokenstr, pubk := generateJWT(true)
 		/* Chat GPT prompt for the below jwt.Parse :
 		how can i use jwt.parse if i used an rsa.privatekey with the signed string */
@@ -108,7 +118,7 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 			}
 			return pubk, nil
 		})
-		if err != jwt.ErrTokenExpired{
+		if !errors.Is(err, jwt.ErrTokenExpired){
 			log.Fatal("token unexpired. ", err)
 		}
 		
@@ -127,13 +137,19 @@ Only serve keys that have not expired.
  */
 func HandleJwks(w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "application/json")
-	_, rawKey := generateRSAKeys()
+	/* _, rawKey := generateRSAKeys()
 	key := NewJWK(rawKey)
 
-	if !keyIsExpired(key){
+	if !(key){
 		keys = append(keys, key)
+	} */
+	var tmp []JWK
+	for _, v := range keys{
+		if !isKeyExpired(v){
+			tmp = append(tmp, v)
+		}
 	}
-	jwks := JWKS{Keys:keys}
+	jwks := JWKS{Keys:tmp}
 
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
@@ -143,7 +159,7 @@ func HandleJwks(w http.ResponseWriter, r *http.Request){
 
 func main(){
 	http.HandleFunc("/auth", HandleAuth)
-	http.HandleFunc("/jwks", HandleJwks)
+	http.HandleFunc("/.well-known/jwks.json", HandleJwks)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
