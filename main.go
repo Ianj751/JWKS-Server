@@ -35,7 +35,6 @@ type JWKS struct{
 
 //global keys variable 
 var keys []JWK
-var jwts []string
 
 func NewJWK(public rsa.PublicKey)JWK{
 	return JWK{
@@ -62,7 +61,7 @@ func generateRSAKeys()(*rsa.PrivateKey, rsa.PublicKey){
 
 	return privKey, privKey.PublicKey
 }
-func generateJWT(expired bool)(string, rsa.PublicKey){
+func generateJWT(expired bool)(string, *rsa.PublicKey){
 	numTime := 5 * time.Minute
 
 	if expired{
@@ -79,26 +78,28 @@ func generateJWT(expired bool)(string, rsa.PublicKey){
 	if err != nil{
 		log.Fatal(err)
 	}
-	return str, privk.PublicKey
+	return str, &privk.PublicKey
 }
 
 /* A /auth endpoint that returns an unexpired, signed JWT on a POST request.
 If the “expired” query parameter is present, issue a JWT signed with the expired key pair and the expired expiry. */
-func handleAuth(w http.ResponseWriter, r *http.Request){
+func HandleAuth(w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost{
 		http.Error(w, "Request method is not Allowed", http.StatusMethodNotAllowed)
+		return
 	}
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 
+	
 	params := r.URL.Query()
-	if _, ok := params["expired"]; ok{
-		//return an expired jwt with the expired key pair and expired expiry
-		tokenstr, _ := generateJWT(true)
+	if _, ok := params["expired"]; !ok{
+		
+		tokenstr, _ := generateJWT(false)
 		encoder.Encode(tokenstr)
-	}else{
-		tokenstr, pubk := generateJWT(false)
+	}else{ //localhost:8080/auth?expired
+		tokenstr, pubk := generateJWT(true)
 		/* Chat GPT prompt for the below jwt.Parse :
 		how can i use jwt.parse if i used an rsa.privatekey with the signed string */
 		token, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
@@ -107,9 +108,11 @@ func handleAuth(w http.ResponseWriter, r *http.Request){
 			}
 			return pubk, nil
 		})
-		if err != nil{
-			log.Fatal(err)
+		if err != jwt.ErrTokenExpired{
+			log.Fatal("token unexpired. ", err)
 		}
+		
+		//return an expired jwt with the expired key pair and expired expiry
 		expTime, _ := token.Claims.GetExpirationTime()
 		data := map[string]interface{}{
 			"jwt": tokenstr,
@@ -122,7 +125,7 @@ func handleAuth(w http.ResponseWriter, r *http.Request){
 /* A RESTful JWKS endpoint that serves the public keys in JWKS format.
 Only serve keys that have not expired.
  */
-func handleJwks(w http.ResponseWriter, r *http.Request){
+func HandleJwks(w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "application/json")
 	_, rawKey := generateRSAKeys()
 	key := NewJWK(rawKey)
@@ -139,8 +142,8 @@ func handleJwks(w http.ResponseWriter, r *http.Request){
 
 
 func main(){
-	http.HandleFunc("/auth", handleAuth)
-	http.HandleFunc("/jwks", handleJwks)
+	http.HandleFunc("/auth", HandleAuth)
+	http.HandleFunc("/jwks", HandleJwks)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
