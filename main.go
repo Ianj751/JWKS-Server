@@ -2,22 +2,33 @@ package main
 
 /* TODO:
 - Write remaining tests
-- gradebot error: token is unverifiable: error while executing keyfunc: the given key ID was not found in the JWKS
+*/
+/* ISSUE:
+gradebot error:
+
+StdEncoding:
+token is unverifiable: error while executing keyfunc: the given key ID was not found in the JWKS
+
+URL Encoding
+token has invalid claims: token is expired
+
+run ./gradebot.exe project1 --debug
+the key is literally there.
 */
 
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"math/big"
 	"net/http"
-
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	//"github.com/google/uuid"
 )
 
 type JWK struct{
@@ -32,19 +43,21 @@ type JWKS struct{
 	Keys []JWK `json:"keys"`
 }
 
-//global keys variable 
-var keys []JWK
-var id int = 0
+ var(
+	keys []JWK
+	kid int = 0
+	
+	)
+
 
 func NewJWK(public rsa.PublicKey)JWK{
-	//i want an incrementing kid. 
-	id += 1
+	kid += 1
 	return JWK{
 		"RS256", //alg
 		"RSA", //kty
-		public.N.String(), //N
-		fmt.Sprintf("%d",public.E), //E
-		fmt.Sprintf("%d", id), //kid, RFC 7517 example A.1 uses a date here
+		base64.RawURLEncoding.EncodeToString(public.N.Bytes()),//base64.RawURLEncoding.EncodeToString(public.N.Bytes()),//N
+		base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes()),//base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes()), //E
+		fmt.Sprint(kid), //kid, RFC 7517 example A.1 uses a date here
 		time.Now().Add(5 * time.Minute), //expiration date, set for a day from now
 	}
 }
@@ -55,7 +68,6 @@ func isKeyExpired(key JWK)bool{
 }
 func generateRSAKeys()(*rsa.PrivateKey, rsa.PublicKey){
 	//RSA key pair is a set of public and private keys
-	
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil{
 		log.Fatal(err)
@@ -63,28 +75,33 @@ func generateRSAKeys()(*rsa.PrivateKey, rsa.PublicKey){
 
 	return privKey, privKey.PublicKey
 }
-func generateJWT(expired bool)(string, *rsa.PublicKey){
+func generateJWT(isExpired bool)(string, *rsa.PublicKey){
 	numTime := 5 * time.Minute
 
-	if expired{
+	if isExpired{
 		numTime = -numTime
 	}
+
+	privk, _ := generateRSAKeys()
+	a := NewJWK(privk.PublicKey)
+	
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, 
 		jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(numTime)),
 			IssuedAt: jwt.NewNumericDate(time.Now()),
+			
 		})
-	privk, _ := generateRSAKeys()
+	token.Header["kid"] = a.Kid
 	
-	a := NewJWK(privk.PublicKey)
-	token.Header["kid"]= a.Kid
-
+	
 	keys = append(keys, a)
+
 	str, err := token.SignedString(privk)
 	if err != nil{
 		log.Fatal(err)
 	}
+
 	return str, &privk.PublicKey
 }
 
@@ -93,17 +110,32 @@ If the “expired” query parameter is present, issue a JWT signed with the exp
 func HandleAuth(w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost{
-		http.Error(w, "Request method is not Allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Request method is not Allowed. Use Method Post Instead", http.StatusMethodNotAllowed)
 		return
 	}
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 
-	
 	params := r.URL.Query()
-	if _, ok := params["expired"]; !ok{
+	_, ok := params["expired"]
+	paramValue := params.Get("expired")
+	
+	if !ok || paramValue != "true"{
 		
-		tokenstr, _ := generateJWT(false)
+		tokenstr, pubk := generateJWT(false)
+
+		//This is really just to double check that the JWT is not expired.
+		//jwt.Parse throws an error if it is expired
+		_, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
+			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+				return nil, fmt.Errorf("unexpected signing method")
+			}
+			return pubk, nil
+		})
+		if err != nil{
+			log.Fatal(err)
+		}
+		
 		data := map[string]interface{}{
 			"jwt": tokenstr,
 		}
@@ -118,7 +150,7 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 			}
 			return pubk, nil
 		})
-		if !errors.Is(err, jwt.ErrTokenExpired){
+		if err != nil && !errors.Is(err, jwt.ErrTokenExpired){
 			log.Fatal("token unexpired. ", err)
 		}
 		
@@ -137,19 +169,18 @@ Only serve keys that have not expired.
  */
 func HandleJwks(w http.ResponseWriter, r *http.Request){
 	w.Header().Set("Content-Type", "application/json")
-	/* _, rawKey := generateRSAKeys()
-	key := NewJWK(rawKey)
+	if r.Method != http.MethodGet{
+		http.Error(w, "Request method is not Allowed. Use Method Get Instead", http.StatusMethodNotAllowed)
+		return
+	}
 
-	if !(key){
-		keys = append(keys, key)
-	} */
-	var tmp []JWK
+	var tmp JWKS
 	for _, v := range keys{
 		if !isKeyExpired(v){
-			tmp = append(tmp, v)
+			tmp.Keys = append(tmp.Keys, v)
 		}
 	}
-	jwks := JWKS{Keys:tmp}
+	jwks := JWKS{Keys:tmp.Keys}
 
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")

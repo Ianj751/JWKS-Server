@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 )
-
-//to find where the payload ends in a jwt
 func TestHandleAuthUnexpired(t *testing.T){
 	req, err := http.NewRequest(http.MethodPost, "http://localhost:8080/auth", nil)
 	if err != nil{
