@@ -66,23 +66,26 @@ func isKeyExpired(key JWK)bool{
 	//returns true if key is expired
 	return time.Now().After(key.Exp)
 }
-func generateRSAKeys()(*rsa.PrivateKey, rsa.PublicKey){
+func generateRSAKeys()(*rsa.PrivateKey, error){
 	//RSA key pair is a set of public and private keys
 	privKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil{
-		log.Fatal(err)
+		return nil, err
 	}
 
-	return privKey, privKey.PublicKey
+	return privKey, nil
 }
-func generateJWT(isExpired bool)(string, *rsa.PublicKey){
+func generateJWT(isExpired bool)(string, *rsa.PublicKey, error){
 	numTime := 5 * time.Minute
 
 	if isExpired{
 		numTime = -numTime
 	}
 
-	privk, _ := generateRSAKeys()
+	privk, err := generateRSAKeys()
+	if err != nil{
+		return "", nil, fmt.Errorf("error generating RSA Keys: %w", err)
+	}
 	a := NewJWK(privk.PublicKey)
 	
 
@@ -99,10 +102,10 @@ func generateJWT(isExpired bool)(string, *rsa.PublicKey){
 
 	str, err := token.SignedString(privk)
 	if err != nil{
-		log.Fatal(err)
+		return "", nil, fmt.Errorf("error signing token: %w", err)
 	}
 
-	return str, &privk.PublicKey
+	return str, &privk.PublicKey, nil
 }
 
 /* A /auth endpoint that returns an unexpired, signed JWT on a POST request.
@@ -122,18 +125,22 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 	
 	if !ok || paramValue != "true"{
 		
-		tokenstr, pubk := generateJWT(false)
+		tokenstr, pubk, err := generateJWT(false)
+		if err != nil{
+			log.Fatal(err)
+		}
 
 		//This is really just to double check that the JWT is not expired.
 		//jwt.Parse throws an error if it is expired
-		_, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
+		_, err = jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 				return nil, fmt.Errorf("unexpected signing method")
 			}
 			return pubk, nil
 		})
 		if err != nil{
-			log.Fatal(err)
+			http.Error(w, "error parsing token: " + err.Error(), http.StatusInternalServerError)
+			return
 		}
 		
 		data := map[string]interface{}{
@@ -141,7 +148,11 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 		}
 		encoder.Encode(data)
 	}else{ //localhost:8080/auth?expired=true
-		tokenstr, pubk := generateJWT(true)
+		tokenstr, pubk, err := generateJWT(true)
+		if err != nil{
+			http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
+			return
+		}
 		/* Chat GPT prompt for the below jwt.Parse :
 		how can i use jwt.parse if i used an rsa.privatekey with the signed string */
 		token, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
@@ -151,11 +162,16 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 			return pubk, nil
 		})
 		if err != nil && !errors.Is(err, jwt.ErrTokenExpired){
-			log.Fatal("token unexpired. ", err)
+			http.Error(w, ("token unexpired: " + err.Error()), http.StatusInternalServerError )
+			return
 		}
 		
 		//return an expired jwt with the expired key pair and expired expiry
-		expTime, _ := token.Claims.GetExpirationTime()
+		expTime, err := token.Claims.GetExpirationTime()
+		if err != nil{
+			http.Error(w, "error obtaining token expiration: " + err.Error(), http.StatusInternalServerError)
+			return
+		}
 		data := map[string]interface{}{
 			"jwt": tokenstr,
 			"expiry":  expTime,
