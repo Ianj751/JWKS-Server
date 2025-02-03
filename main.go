@@ -127,7 +127,8 @@ func HandleAuth(w http.ResponseWriter, r *http.Request){
 		
 		tokenstr, pubk, err := generateJWT(false)
 		if err != nil{
-			log.Fatal(err)
+			http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
+			return
 		}
 
 		//This is really just to double check that the JWT is not expired.
