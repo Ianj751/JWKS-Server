@@ -1,4 +1,5 @@
 # JWKS-Server
+![Screenshot 2025-02-04 162542](https://github.com/user-attachments/assets/f539ab45-b391-41bc-af86-b09fa4d1180e)
 
 ## How to build:
 
