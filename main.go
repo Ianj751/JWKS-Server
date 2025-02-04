@@ -110,77 +110,82 @@ func generateJWT(isExpired bool)(string, *rsa.PublicKey, error){
 
 /* A /auth endpoint that returns an unexpired, signed JWT on a POST request.
 If the “expired” query parameter is present, issue a JWT signed with the expired key pair and the expired expiry. */
-func HandleAuth(w http.ResponseWriter, r *http.Request){
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost{
-		http.Error(w, "Request method is not Allowed. Use Method Post Instead", http.StatusMethodNotAllowed)
-		return
-	}
-	encoder := json.NewEncoder(w)
-	encoder.SetIndent("", "  ")
+func HandleAuth(w http.ResponseWriter, r *http.Request) {
+    w.Header().Set("Content-Type", "application/json")
+    if r.Method != http.MethodPost {
+        http.Error(w, "Request method is not Allowed. Use Method Post Instead", http.StatusMethodNotAllowed)
+        return
+    }
+    encoder := json.NewEncoder(w)
+    encoder.SetIndent("", "  ")
 
-	params := r.URL.Query()
-	_, ok := params["expired"]
-	paramValue := params.Get("expired")
-	
-	if !ok || paramValue != "true"{
-		
-		tokenstr, pubk, err := generateJWT(false)
-		if err != nil{
-			http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
-			return
-		}
+    params := r.URL.Query()
+    _, ok := params["expired"]
+    paramValue := params.Get("expired")
 
-		//This is really just to double check that the JWT is not expired.
-		//jwt.Parse throws an error if it is expired
-		_, err = jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method")
-			}
-			return pubk, nil
-		})
-		if err != nil{
-			http.Error(w, "error parsing token: " + err.Error(), http.StatusInternalServerError)
-			return
-		}
-		
-		data := map[string]interface{}{
-			"jwt": tokenstr,
-		}
-		encoder.Encode(data)
-	}else{ //localhost:8080/auth?expired=true
-		tokenstr, pubk, err := generateJWT(true)
-		if err != nil{
-			http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
-			return
-		}
-		/* Chat GPT prompt for the below jwt.Parse :
-		how can i use jwt.parse if i used an rsa.privatekey with the signed string */
-		token, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-				return nil, fmt.Errorf("unexpected signing method")
-			}
-			return pubk, nil
-		})
-		if err != nil && !errors.Is(err, jwt.ErrTokenExpired){
-			http.Error(w, ("token unexpired: " + err.Error()), http.StatusInternalServerError )
-			return
-		}
-		
-		//return an expired jwt with the expired key pair and expired expiry
-		expTime, err := token.Claims.GetExpirationTime()
-		if err != nil{
-			http.Error(w, "error obtaining token expiration: " + err.Error(), http.StatusInternalServerError)
-			return
-		}
-		data := map[string]interface{}{
-			"jwt": tokenstr,
-			"expiry":  expTime,
-		}
-		encoder.Encode(data)
-		
-	}
+    if !ok || paramValue != "true" {
+        tokenstr, pubk, err := generateJWT(false)
+        if err != nil {
+            http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        // This is really just to double check that the JWT is not expired.
+        _, err = jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+                return nil, fmt.Errorf("unexpected signing method")
+            }
+            return pubk, nil
+        })
+        if err != nil {
+            http.Error(w, "error parsing token: " + err.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        data := map[string]interface{}{
+            "jwt": tokenstr,
+        }
+        encoder.Encode(data)
+    } else { // localhost:8080/auth?expired=true
+        // Generate the expired JWT
+        tokenstr, pubk, err := generateJWT(true)
+        if err != nil {
+            http.Error(w, "error generating token: " + err.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        // Mark key as expired and make sure expired key doesn't appear in JWKS
+        expiredKey := keys[len(keys)-1]
+        expiredKey.Exp = time.Now().Add(-time.Minute) // Set the expiration time in the past
+        keys[len(keys)-1] = expiredKey // Update the expired key in the keys slice
+
+        // Return expired JWT and expired key info
+        token, err := jwt.Parse(tokenstr, func(token *jwt.Token) (interface{}, error) {
+            if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
+                return nil, fmt.Errorf("unexpected signing method")
+            }
+            return pubk, nil
+        })
+        if err != nil && !errors.Is(err, jwt.ErrTokenExpired) {
+            http.Error(w, "token unexpired: " + err.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        // return an expired JWT with the expired key pair and expired expiry
+        expTime, err := token.Claims.GetExpirationTime()
+        if err != nil {
+            http.Error(w, "error obtaining token expiration: " + err.Error(), http.StatusInternalServerError)
+            return
+        }
+
+        data := map[string]interface{}{
+            "jwt": tokenstr,
+            "expiry": expTime,
+        }
+        encoder.Encode(data)
+    }
 }
+
 /* A RESTful JWKS endpoint that serves the public keys in JWKS format.
 Only serve keys that have not expired.
  */
