@@ -1,9 +1,12 @@
 package main
 
+/* To test coverage
+go test -coverprofile=<filename>
+go tool cover -html="<filename>"*/
+
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,27 +15,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 )
-func makeRequest(method string, url string)([]byte, error){
-	req, err := http.NewRequest(method, url, nil)
-	if err != nil{
-		return nil, fmt.Errorf("%w", err)
-	}
 
-	recorder := httptest.NewRecorder()
-	HandleAuth(recorder, req)
-	resp := recorder.Result()
-	if resp.StatusCode != 200{
-		return nil, fmt.Errorf("status code was not 200: recieved: %d", resp.StatusCode)
-	}
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil{
-		return nil, fmt.Errorf("%w", err)
-	}
-	
-
-	return	body, nil
-}
 func segmentJWT(tokenstr string)([]string, error){
 	result := strings.Split(tokenstr, ".")
 	if len(result) != 3{
@@ -41,13 +24,13 @@ func segmentJWT(tokenstr string)([]string, error){
 	return result, nil
 }
 
-func TestHandleAuthUnexppired(t *testing.T){
+func TestHandleAuthUnexpired(t *testing.T){
 	//TODO: Write Test
 	// Ensure that jwt returned is valid and in correct format
-	body, err := makeRequest(http.MethodPost, "http://localhost:8080/auth")
-	if err != nil{
-		t.Error(err)
-	}
+	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
+	w := httptest.NewRecorder()
+	HandleAuth(w, req)
+	body := w.Body.Bytes()
 
 	var data map[string]interface{}
 	json.Unmarshal(body, &data)
@@ -109,10 +92,10 @@ func TestHandleAuthUnexppired(t *testing.T){
 }
 func TestHandleAuthExpired(t *testing.T){
 	//Ensure that the jwt is expired, in correct format, and contains expiry
-	body, err := makeRequest(http.MethodPost, "http://localhost:8080/auth?expired=true")
-	if err != nil{
-		t.Error(err)
-	}
+	req := httptest.NewRequest(http.MethodPost, "/auth?expired=true", nil)
+	w := httptest.NewRecorder()
+	HandleAuth(w, req)
+	body := w.Body.Bytes()
 
 	data := map [string]interface{}{}
 	json.Unmarshal(body, &data)
@@ -177,13 +160,53 @@ func TestHandleAuthExpired(t *testing.T){
 func TestHandleJWKS(t *testing.T){
 	//TODO: Write Test
 	//Ensure that JWKS is correctly formatted, has appropriate members, and keys not expired
-	body, err := makeRequest(http.MethodGet, "http://localhost:8080/.well-known/jwks.json")
-	if err != nil{
-		t.Error(err)
+	//Make req to auth, authexpired check if keys present and correct members
+	
+
+	 req1 := httptest.NewRequest(http.MethodPost, "/.well-known/jwks.json", nil)
+	w1 := httptest.NewRecorder()
+	HandleJwks(w1, req1)
+	if w1.Result().StatusCode != http.StatusMethodNotAllowed{
+		t.Errorf("expected status code 405, got: %d", req1.Response.StatusCode)
 	}
 
-	data := map [string]interface{}{}
-	json.Unmarshal(body, &data)
+	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
+	w := httptest.NewRecorder()
+	HandleJwks(w, req)
+	body := w.Body.Bytes()
+
+	var jwks JWKS
+	err := json.Unmarshal(body, &jwks)
+	if err != nil{
+		t.Fatalf("error unmarshalling json: %v", err)
+	}
+	if jwks.Keys == nil{
+		return 
+	}
+
+	for i, key := range jwks.Keys{
+		
+		if key.Alg != "RS256"{
+			t.Errorf("jwk parameter 'alg' not found at jwks index %d, key: %v", i, key)
+		}
+		//big.Int(0).Bytes() when base64rawurl encoded is "", if it is absent, it is the same
+		if key.E == "" {
+			t.Errorf("jwk parameter 'E' was zero or absent at jwks index %d, key: %v", i, key)
+		}
+		if key.Kid == ""{
+			t.Errorf("jwk parameter 'kid' not found at jwks index %d, key: %v", i, key)
+		}
+		if key.Kty != "RSA"{
+			t.Errorf("jwk parameter 'kty' was not RSA at jwks index %d, key: %v", i, key)
+		}
+		if key.N == ""{
+			t.Errorf("jwk parameter 'N' not found at jwks index %d, key: %v", i, key)
+		}
+		if time.Now().After(key.Exp){
+			t.Errorf("key at index %d, was expired, key: %v", i, key)
+		}
+	}
+	
 }
 func TestGenerateJWT(t *testing.T){
 	//TODO: Write Test
@@ -192,18 +215,68 @@ func TestGenerateJWT(t *testing.T){
 	if err != nil{
 		t.Error(err)
 	}
-	/* token, err := jwt.Parse(unexpJWT, func(token *jwt.Token) (interface{}, error) {
+	token, err := jwt.Parse(unexpJWT, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
 			return nil, fmt.Errorf("unexpected signing method")
 		}
 		return unexpPubKey, nil
 	})
 	if err != nil{
-		t.Error("error parsing token: ", err)
-	} */
+		t.Fatal("error parsing token: ", err)
+	}
+
+	claims := token.Claims.(jwt.MapClaims)
+	if exp, ok := claims["exp"].(float64); !ok{
+		t.Error("parameter 'exp' not found in jwt")
+	}else if expTime := time.Unix(int64(exp), 0); time.Now().After(expTime){
+		t.Error("jwt recieved is expired: ", expTime)
+	}
+
+	if iat, ok := claims["iat"].(float64); !ok{
+		t.Error("parameter 'iat' not found in jwt")
+	}else if iatTime := time.Unix(int64(iat), 0); time.Now().Before(iatTime){
+		t.Error("jwt parameter 'iat' is in the future: ", iatTime)
+	}
+
 	
 }
 func TestGenerateRSA(t *testing.T){
 	//TODO: Write Test
 	//Ensure that RSA Keys are not invalid
+	//Reference RFC 8017
+	key, err := generateRSAKeys()
+	if err != nil{
+		t.Error("error generating rsa keys: ", err)
+	}
+	
+
+	// n    the RSA modulus, a positive integer
+	if key.N.Sign() != 1 {
+		t.Error("invalid modulus")
+	
+	}
+	// d   the RSA private exponent, a positive integer
+	if key.D.Sign() != 1 {
+		 t.Error("invalid private exponent: ")
+	}
+
+	// e    the RSA public exponent, a positive integer
+	/*, and the RSA
+   public exponent e is an integer between 3 and n - 1... */
+	if key.E < 0 || key.E < 3{
+		t.Error("invalid public exponent, was not positive")
+	}
+
+	/* RFC 8017: In a valid RSA public key, the RSA modulus n is a product of u
+   distinct odd primes r_i, i = 1, 2, ..., u, where u >= 2...*/
+	if len(key.Primes) < 2 {
+		t.Error("not enough prime factors")
+	}
+
+	// Check if the key is valid by reconstructing some components
+	
+	if err := key.Validate(); err != nil {
+		t.Errorf("key validation failed: %v", err)
+	}
+
 }
