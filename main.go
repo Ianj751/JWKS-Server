@@ -1,21 +1,5 @@
 package main
 
-/* TODO:
-- Write remaining tests
-*/
-/* ISSUE:
-gradebot error:
-
-StdEncoding:
-token is unverifiable: error while executing keyfunc: the given key ID was not found in the JWKS
-
-URL Encoding
-token has invalid claims: token is expired
-
-run ./gradebot.exe project1 --debug
-the key is literally there.
-*/
-
 import (
 	"crypto/rand"
 	"crypto/rsa"
