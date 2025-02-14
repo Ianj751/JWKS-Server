@@ -2,6 +2,9 @@
 
 ![Screenshot 2025-02-04 162542](https://github.com/user-attachments/assets/f539ab45-b391-41bc-af86-b09fa4d1180e)
 
+
+![Screenshot 2025-02-14 131334](https://github.com/user-attachments/assets/fb81197e-079d-49d8-96b1-4dff0e382157)
+
 ## How to build:
 
 "go build"
