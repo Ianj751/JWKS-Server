@@ -1,5 +1,6 @@
 # JWKS-Server
-![Screenshot 2025-02-14 131803](https://github.com/user-attachments/assets/16a82a6d-d4f4-4bcf-8b4f-97b20b422cac)
+
+![Screenshot 2025-03-18 141405](https://github.com/user-attachments/assets/c6d655a3-9fcd-4fba-bb9d-3a4bcb00e28f)
 
 ![Screenshot 2025-02-14 131918](https://github.com/user-attachments/assets/1061e709-8b6b-44fb-86b4-9515c8a3d767)
 
