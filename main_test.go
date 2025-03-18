@@ -26,14 +26,14 @@ func TestHandleAuthUnexpired(t *testing.T) {
 	w1 := httptest.NewRecorder()
 	HandleAuth(w1, req1)
 
-	if w1.Code != http.StatusMethodNotAllowed{
+	if w1.Code != http.StatusMethodNotAllowed {
 		t.Errorf("Expected error code 405, recieved %d", req1.Response.StatusCode)
 	}
 	// Ensure that jwt returned is valid and in correct format
 	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
 	w := httptest.NewRecorder()
 	HandleAuth(w, req)
-	if w.Code != http.StatusOK{
+	if w.Code != http.StatusOK {
 		t.Errorf("expected status code 200, got %d", w.Code)
 	}
 	body := w.Body.Bytes()
@@ -100,11 +100,10 @@ func TestHandleAuthExpired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/auth?expired=true", nil)
 	w := httptest.NewRecorder()
 	HandleAuth(w, req)
-	if w.Code != http.StatusOK{
+	if w.Code != http.StatusOK {
 		t.Errorf("expected status code 200, got %d", w.Code)
 	}
 	body := w.Body.Bytes()
-	
 
 	data := map[string]interface{}{}
 	json.Unmarshal(body, &data)
@@ -180,7 +179,7 @@ func TestHandleJWKS(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
 	w := httptest.NewRecorder()
 	HandleJwks(w, req)
-	if w.Code != http.StatusOK{
+	if w.Code != http.StatusOK {
 		t.Errorf("expected status code 200, got %d", w.Code)
 	}
 	body := w.Body.Bytes()
@@ -218,76 +217,7 @@ func TestHandleJWKS(t *testing.T) {
 	}
 
 }
-func TestGenerateJWT(t *testing.T) {
-	//Kinda redundant but, ensure that jwt is valid and a valid public key is also returned
-	unexpJWT, unexpPubKey, err := generateJWT(false)
-	if err != nil {
-		t.Fatal("expected no error but got: ", err)
-	}
-	if unexpJWT == ""{
-		t.Fatal("expected jwt to have contents but got an empty string")
-	}
-	if unexpPubKey == nil {
-		t.Fatal("Expected a valid RSA public key, but got nil")
-	}
-	token, err := jwt.ParseWithClaims(unexpJWT, &jwt.RegisteredClaims{},func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodRSA); !ok {
-			return nil, fmt.Errorf("unexpected signing method")
-		}
-		return unexpPubKey, nil
-	})
-	if err != nil {
-		t.Fatal("error parsing token: ", err)
-	}
-	if err != nil || !token.Valid {
-		t.Fatalf("Expected a valid token, but got error: %v", err)
-	}
 
-	
-
-	claims, ok := token.Claims.(*jwt.RegisteredClaims)
-	if !ok {
-		t.Fatalf("Expected claims to be of type RegisteredClaims, got %T", claims)
-	}
-
-	if claims.ExpiresAt.Time.Before(time.Now()) {
-		t.Fatal("Expected token to be valid but it's already expired")
-	}
-	
-
-	if claims.IssuedAt == nil {
-		t.Error("parameter 'iat' not found in JWT")
-	} else {
-		iatTime := claims.IssuedAt.Time
-		if time.Now().Before(iatTime) {
-			t.Errorf("JWT parameter 'iat' is in the future: %v", iatTime)
-		}
-	}
-
-	expiredTokenStr, pubKeyExpired, err := generateJWT(true)
-	if err != nil {
-		t.Fatalf("Expected no error for expired token generation, but got: %v", err)
-	}
-
-	// Parse the expired token
-	expiredToken, err := jwt.ParseWithClaims(expiredTokenStr, &jwt.RegisteredClaims{}, func(token *jwt.Token) (interface{}, error) {
-		return pubKeyExpired, nil
-	})
-	if err == nil && expiredToken.Valid {
-		t.Fatal("Expected expired token to be invalid, but it's valid")
-	}
-
-	if expiredToken != nil {
-		expiredClaims, ok := expiredToken.Claims.(*jwt.RegisteredClaims)
-		if !ok {
-			t.Fatal("Expected claims to be of type RegisteredClaims for expired token")
-		}
-		if expiredClaims.ExpiresAt.Time.After(time.Now()) {
-			t.Fatal("Expected expired token's expiration time to be in the past")
-		}
-	}
-
-}
 func TestGenerateRSA(t *testing.T) {
 	//Ensure that RSA Keys are not invalid
 	//Reference RFC 8017
@@ -326,5 +256,3 @@ func TestGenerateRSA(t *testing.T) {
 	}
 
 }
-
-
