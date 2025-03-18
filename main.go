@@ -11,6 +11,7 @@ import (
 	"log"
 	"math/big"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -33,14 +34,12 @@ type DBKeys struct {
 	Key []byte
 	Exp int
 }
+type AppHandler struct {
+	db *sql.DB
+}
 
-var (
-	kid int = 0
-	db  *sql.DB
-)
+func NewJWK(public rsa.PublicKey, kid int) JWK {
 
-func NewJWK(public rsa.PublicKey) JWK {
-	kid += 1
 	return JWK{
 		"RS256", //alg
 		"RSA",   //kty
@@ -70,7 +69,7 @@ func DBKeytoJWT(key DBKeys) (string, error) {
 			ExpiresAt: jwt.NewNumericDate(time.Unix(int64(key.Exp), 0)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		})
-	token.Header["kid"] = key.Kid
+	token.Header["kid"] = fmt.Sprint(key.Kid)
 
 	str, err := token.SignedString(privKey)
 	if err != nil {
@@ -80,16 +79,16 @@ func DBKeytoJWT(key DBKeys) (string, error) {
 
 }
 
-func getDBKey(isExpired bool) (DBKeys, error) {
-	var privateKeys []DBKeys
-	rows, err := db.Query("SELECT * FROM keys;", time.Now().Unix())
+func getDBKey(db *sql.DB, isExpired bool) (DBKeys, error) {
+	privateKeys := []DBKeys{}
+	rows, err := db.Query("SELECT * FROM keys;")
 	if err != nil {
 		return DBKeys{}, fmt.Errorf("error retrieving keys from database: %w", err)
 	}
 	defer rows.Close()
 
 	for rows.Next() {
-		var privs DBKeys
+		privs := DBKeys{}
 		if err := rows.Scan(&privs.Kid, &privs.Key, &privs.Exp); err != nil {
 			return DBKeys{}, fmt.Errorf("error copying rows into values: %w", err)
 		}
@@ -99,15 +98,15 @@ func getDBKey(isExpired bool) (DBKeys, error) {
 		return DBKeys{}, fmt.Errorf("error iterating through rows: %w", err)
 	}
 	if isExpired {
-		//if is expired return key with expiration date before now
+		//If now is before an expiration date then it is unexpired
 		for _, key := range privateKeys {
-			if time.Now().Before(time.Unix(int64(key.Exp), 0)) {
+			if time.Now().After(time.Unix(int64(key.Exp), 0)) {
 				return key, nil
 			}
 		}
 	} else {
 		for _, key := range privateKeys {
-			if time.Now().After(time.Unix(int64(key.Exp), 0)) {
+			if time.Now().Before(time.Unix(int64(key.Exp), 0)) {
 				return key, nil
 			}
 		}
@@ -115,13 +114,33 @@ func getDBKey(isExpired bool) (DBKeys, error) {
 	return DBKeys{}, fmt.Errorf("should be impossible to reach this path")
 
 }
+func getAllDBKeys(db *sql.DB) ([]DBKeys, error) {
+	privateKeys := []DBKeys{}
+	rows, err := db.Query("SELECT * FROM keys WHERE exp > ?;", time.Now().Unix())
+	if err != nil {
+		return nil, fmt.Errorf("error retrieving keys from database: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		privs := DBKeys{}
+		if err := rows.Scan(&privs.Kid, &privs.Key, &privs.Exp); err != nil {
+			return nil, fmt.Errorf("error copying rows into values: %w", err)
+		}
+		privateKeys = append(privateKeys, privs)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating through rows: %w", err)
+	}
+	return privateKeys, nil
+}
 
 /*
 	A /auth endpoint that returns an unexpired, signed JWT on a POST request.
 
 If the “expired” query parameter is present, issue a JWT signed with the expired key pair and the expired expiry.
 */
-func HandleAuth(w http.ResponseWriter, r *http.Request) {
+func (h *AppHandler) HandleAuth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Request method is not Allowed. Use Method Post Instead", http.StatusMethodNotAllowed)
@@ -136,7 +155,7 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 
 	if !ok || paramValue != "true" {
 
-		dbkey, err := getDBKey(false)
+		dbkey, err := getDBKey(h.db, false)
 		if err != nil {
 			http.Error(w, "error generating token: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -153,7 +172,7 @@ func HandleAuth(w http.ResponseWriter, r *http.Request) {
 		encoder.Encode(data)
 	} else { // localhost:8080/auth?expired=true
 		// Generate the expired JWT
-		dbkey, err := getDBKey(false)
+		dbkey, err := getDBKey(h.db, true)
 		if err != nil {
 			http.Error(w, "error generating token: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -182,7 +201,7 @@ Only serve keys that have not expired.
 Reads all valid (non-expired) private keys from the DB.
 Creates a JWKS response from those private keys.
 */
-func HandleJwks(w http.ResponseWriter, r *http.Request) {
+func (h *AppHandler) HandleJwks(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Request method is not Allowed. Use Method Get Instead", http.StatusMethodNotAllowed)
@@ -190,25 +209,47 @@ func HandleJwks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//TODO: Create response from privateKeys
-	//Get list of unexpired keys from getDBKey
+	dbkeys, err := getAllDBKeys(h.db)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("error retrieving keys from database: %w", err), http.StatusInternalServerError)
+		return
+	}
+	//Convert to JWKS
+	jwkeys := []JWK{}
+	var temp JWK
+	for _, val := range dbkeys {
+		pk, err := x509.ParsePKCS1PrivateKey(val.Key)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("error converting blob to rsa key: %w", err), http.StatusInternalServerError)
+			return
+		}
+		temp = NewJWK(pk.PublicKey, val.Kid)
+		jwkeys = append(jwkeys, temp)
+	}
 
-	jwks := JWKS{Keys: nil}
+	jwks := JWKS{Keys: jwkeys}
 
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	encoder.Encode(jwks)
 }
-func generateDBKeys(isExpired bool) error {
+func generateDBKeys(db *sql.DB, isExpired bool) error {
+	if db == nil {
+		return fmt.Errorf("database connection was nil")
+	}
+	if err := db.Ping(); err != nil {
+		return fmt.Errorf("error establishing database connection: %w", err)
+	}
 	timeToAdd := time.Hour * 1
 	if isExpired {
 		timeToAdd *= -1
 	}
 	privateKey, err := generateRSAKeys()
-	if err != nil {
+	if err != nil || privateKey == nil {
 		return fmt.Errorf("error generating rsa keys: %w", err)
 	}
 	PKCS1 := x509.MarshalPKCS1PrivateKey(privateKey)
-	_, err = db.Exec("INSERT INTO keys (key, exp) VALUES (?, ?);", PKCS1, time.Now().Add(timeToAdd))
+	_, err = db.Exec("INSERT INTO keys (key, exp) VALUES (?, ?);", PKCS1, time.Now().Add(timeToAdd).Unix())
 	if err != nil {
 		return fmt.Errorf("error inserting private key into database: %w", err)
 	}
@@ -216,11 +257,19 @@ func generateDBKeys(isExpired bool) error {
 }
 
 func main() {
+	_, err := os.Create("./totally_not_my_privateKeys.db")
+	if err != nil {
+		log.Fatal("error creating database file: ", err)
+	}
 	db, err := sql.Open("sqlite3", "./totally_not_my_privateKeys.db")
 	if err != nil {
-		panic("failed to connect database")
+		log.Fatal("error connecting to database: ", err)
 	}
 	defer db.Close()
+	if err = db.Ping(); err != nil || db == nil {
+		log.Fatal("error establishing connection to database: ", err)
+	}
+
 	/* Initialize Table */
 	_, err = db.Exec("CREATE TABLE IF NOT EXISTS `keys`( `kid` INTEGER PRIMARY KEY AUTOINCREMENT, `key` BLOB NOT NULL, `exp` INTEGER NOT NULL);")
 	if err != nil {
@@ -229,17 +278,20 @@ func main() {
 	/*
 		Generate 2 private Keys, one expired and one non expired and save them to the DB.
 	*/
-	err = generateDBKeys(true) //expired key
+	err = generateDBKeys(db, true) //expired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	generateDBKeys(false) //unexpired key
+	generateDBKeys(db, false) //unexpired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
+	/* Shout out to claude for this solution */
+	handler := &AppHandler{db: db}
 
-	http.HandleFunc("/auth", HandleAuth)
-	http.HandleFunc("/.well-known/jwks.json", HandleJwks)
+	http.HandleFunc("/auth", handler.HandleAuth)
+	http.HandleFunc("/.well-known/jwks.json", handler.HandleJwks)
 
 	log.Fatal(http.ListenAndServe(":8080", nil))
+
 }
