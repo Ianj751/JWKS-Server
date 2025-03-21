@@ -38,15 +38,15 @@ type AppHandler struct {
 	db *sql.DB
 }
 
-func NewJWK(public rsa.PublicKey, kid int) JWK {
+func NewJWK(public rsa.PublicKey, kid int, exp int64) JWK {
 
 	return JWK{
 		"RS256", //alg
 		"RSA",   //kty
 		base64.RawURLEncoding.EncodeToString(public.N.Bytes()),                    //base64.RawURLEncoding.EncodeToString(public.N.Bytes()),//N
 		base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes()), //base64.RawURLEncoding.EncodeToString(big.NewInt(int64(public.E)).Bytes()), //E
-		fmt.Sprint(kid),               //kid, RFC 7517 example A.1 uses a date here
-		time.Now().Add(1 * time.Hour), //expiration date, set for an hour from now
+		fmt.Sprint(kid),   //kid, RFC 7517 example A.1 uses a date here
+		time.Unix(exp, 0), //expiration date, set for an hour from now
 	}
 }
 
@@ -208,10 +208,9 @@ func (h *AppHandler) HandleJwks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//TODO: Create response from privateKeys
 	dbkeys, err := getAllDBKeys(h.db)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("error retrieving keys from database: %w", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("error retrieving keys from database: %v", err), http.StatusInternalServerError)
 		return
 	}
 	//Convert to JWKS
@@ -220,10 +219,10 @@ func (h *AppHandler) HandleJwks(w http.ResponseWriter, r *http.Request) {
 	for _, val := range dbkeys {
 		pk, err := x509.ParsePKCS1PrivateKey(val.Key)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("error converting blob to rsa key: %w", err), http.StatusInternalServerError)
+			http.Error(w, fmt.Sprintf("error converting blob to rsa key: %v", err), http.StatusInternalServerError)
 			return
 		}
-		temp = NewJWK(pk.PublicKey, val.Kid)
+		temp = NewJWK(pk.PublicKey, val.Kid, int64(val.Exp))
 		jwkeys = append(jwkeys, temp)
 	}
 
@@ -233,7 +232,7 @@ func (h *AppHandler) HandleJwks(w http.ResponseWriter, r *http.Request) {
 	encoder.SetIndent("", "  ")
 	encoder.Encode(jwks)
 }
-func generateDBKeys(db *sql.DB, isExpired bool) error {
+func GenerateDBKeys(db *sql.DB, isExpired bool) error {
 	if db == nil {
 		return fmt.Errorf("database connection was nil")
 	}
@@ -278,11 +277,11 @@ func main() {
 	/*
 		Generate 2 private Keys, one expired and one non expired and save them to the DB.
 	*/
-	err = generateDBKeys(db, true) //expired key
+	err = GenerateDBKeys(db, true) //expired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	generateDBKeys(db, false) //unexpired key
+	GenerateDBKeys(db, false) //unexpired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}

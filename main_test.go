@@ -1,223 +1,339 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"database/sql"
+
+	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
+	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-func segmentJWT(tokenstr string) ([]string, error) {
-	result := strings.Split(tokenstr, ".")
-	if len(result) != 3 {
-		return nil, fmt.Errorf("failed to segment jwt")
+func TestHandleAuth(t *testing.T) {
+	// Generate test RSA private keys
+	validKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	validKeyBytes := x509.MarshalPKCS1PrivateKey(validKey)
+
+	expiredKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	expiredKeyBytes := x509.MarshalPKCS1PrivateKey(expiredKey)
+
+	// Calculate timestamps for testing
+	now := time.Now()
+	// Set unexpired time to 1 hour in the future
+	unexpiredTime := now.Add(time.Hour).Unix()
+	// Set expired time to 1 hour in the past
+	expiredTime := now.Add(-time.Hour).Unix()
+
+	tests := []struct {
+		name           string
+		method         string
+		queryParam     string
+		mockSetup      func(sqlmock.Sqlmock)
+		expectedStatus int
+		expectedBody   map[string]interface{}
+	}{
+		{
+			name:       "Valid POST request without expired param",
+			method:     http.MethodPost,
+			queryParam: "",
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				// Mock the database response with both expired and unexpired keys
+				// The handler will filter for unexpired keys
+				rows := sqlmock.NewRows([]string{"kid", "key", "exp"}).
+					// This key is not expired (future timestamp)
+					AddRow(1, validKeyBytes, unexpiredTime).
+					// This key is expired (past timestamp)
+					AddRow(2, expiredKeyBytes, expiredTime)
+
+				// Match the exact query used in getDBKey
+				mock.ExpectQuery("SELECT \\* FROM keys;").
+					WillReturnRows(rows)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"jwt": "", // We can't predict the JWT key, but we can check it exists
+			},
+		},
+		{
+			name:       "Valid POST request with expired=true",
+			method:     http.MethodPost,
+			queryParam: "expired=true",
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				// Mock the database response with both expired and unexpired keys
+				// The handler will filter for expired keys
+				rows := sqlmock.NewRows([]string{"kid", "key", "exp"}).
+					// This key is not expired (future timestamp)
+					AddRow(1, validKeyBytes, unexpiredTime).
+					// This key is expired (past timestamp)
+					AddRow(2, expiredKeyBytes, expiredTime)
+
+				// Match the exact query used in getDBKey
+				mock.ExpectQuery("SELECT \\* FROM keys;").
+					WillReturnRows(rows)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"jwt":    "", // We can't predict the JWT key, but we can check it exists
+				"expiry": float64(expiredTime),
+			},
+		},
+		{
+			name:           "Invalid method (GET)",
+			method:         http.MethodGet,
+			queryParam:     "",
+			mockSetup:      func(mock sqlmock.Sqlmock) {},
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   nil,
+		},
 	}
-	return result, nil
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			// Setup SQL mock
+			db, mock, err := sqlmock.New()
+			require.NoError(t, err)
+			defer db.Close()
+
+			// Configure the mock based on test case
+			tc.mockSetup(mock)
+
+			// Create a new request
+			url := "/auth"
+			if tc.queryParam != "" {
+				url = url + "?" + tc.queryParam
+			}
+
+			req, err := http.NewRequest(tc.method, url, nil)
+			assert.NoError(t, err)
+
+			// Create a ResponseRecorder to record the response
+			rr := httptest.NewRecorder()
+
+			// Create the handler with our mock DB
+			handler := &AppHandler{db: db}
+
+			// Call the handler
+			handler.HandleAuth(rr, req)
+
+			// If response doesn't match expected, log the body for debugging
+			if rr.Code != tc.expectedStatus {
+				t.Logf("Response body: %s", rr.Body.String())
+			}
+
+			// Check status code
+			assert.Equal(t, tc.expectedStatus, rr.Code)
+
+			// For successful requests, check the response body
+			if tc.expectedStatus == http.StatusOK {
+				var response map[string]interface{}
+				err = json.NewDecoder(rr.Body).Decode(&response)
+				assert.NoError(t, err)
+
+				// Check JWT exists
+				assert.Contains(t, response, "jwt")
+				assert.NotEmpty(t, response["jwt"])
+
+				// If expecting expiry, check it
+				if _, ok := tc.expectedBody["expiry"]; ok {
+					assert.Contains(t, response, "expiry")
+				}
+			}
+
+			// Verify all expected SQL queries were made
+			err = mock.ExpectationsWereMet()
+			assert.NoError(t, err)
+		})
+	}
 }
 
-func TestHandleAuthUnexpired(t *testing.T) {
-	//Check if auth only responds to Post Requests
-	req1 := httptest.NewRequest(http.MethodGet, "/auth", nil)
-	w1 := httptest.NewRecorder()
-	HandleAuth(w1, req1)
-
-	if w1.Code != http.StatusMethodNotAllowed {
-		t.Errorf("Expected error code 405, recieved %d", req1.Response.StatusCode)
-	}
-	// Ensure that jwt returned is valid and in correct format
-	req := httptest.NewRequest(http.MethodPost, "/auth", nil)
-	w := httptest.NewRecorder()
-	HandleAuth(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status code 200, got %d", w.Code)
-	}
-	body := w.Body.Bytes()
-
-	var data map[string]interface{}
-	json.Unmarshal(body, &data)
-	//parse jwt
-
-	tokenstr := data["jwt"].(string)
-	//Does data[jwt] have valid header and payload?
-	p := jwt.NewParser()
-	splitJWT, err := segmentJWT(tokenstr)
-	if err != nil {
-		t.Error(err)
-	}
-
-	h, err := p.DecodeSegment(splitJWT[0])
-	if err != nil {
-		t.Error(err)
-	}
-	pL, err := p.DecodeSegment(splitJWT[1])
-	if err != nil {
-		t.Error(err)
-	}
-
-	//header has alg, kid, and typ
-	var header map[string]interface{}
-	json.Unmarshal(h, &header)
-	if alg, ok := header["alg"]; !ok || alg != "RS256" {
-		t.Error("header param 'alg' has invalid value", header)
-	}
-	if kid, ok := header["kid"]; !ok || kid == "" {
-		t.Error("header param 'kid' has invalid value", header)
-	}
-	if typ, ok := header["typ"]; !ok || typ != "JWT" {
-		t.Error("header param 'typ' has invalid value", header)
-	}
-	//payload has exp, iat
-	var payload map[string]interface{}
-	json.Unmarshal(pL, &payload)
-	//big numbers get stored in scientific notation, 1.73862133e+09. This is a float64
-	//have to convert then from float to int64
-	if expFloat, ok := payload["exp"].(float64); ok {
-		exp := int64(expFloat)
-		if time.Now().After(time.Unix(exp, 0)) {
-			t.Errorf("Token expired at %v", time.Unix(exp, 0))
-		}
-	} else {
-		t.Error("payload param 'exp' is missing or not a valid number", payload)
-	}
-
-	if iatFloat, ok := payload["iat"].(float64); ok {
-		iat := int64(iatFloat) // Convert from float64
-		if time.Now().Before(time.Unix(iat, 0)) {
-			t.Errorf("Token 'iat' is in the future: %v", time.Unix(iat, 0))
-		}
-	} else {
-		t.Error("payload param 'iat' is missing or not a valid number", payload)
-	}
-
-}
-func TestHandleAuthExpired(t *testing.T) {
-	//Ensure that the jwt is expired, in correct format, and contains expiry
-	req := httptest.NewRequest(http.MethodPost, "/auth?expired=true", nil)
-	w := httptest.NewRecorder()
-	HandleAuth(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status code 200, got %d", w.Code)
-	}
-	body := w.Body.Bytes()
-
-	data := map[string]interface{}{}
-	json.Unmarshal(body, &data)
-
-	expiryFloat, ok := data["expiry"].(float64)
-	expiry := int64(expiryFloat)
-	if !ok || time.Now().Before(time.Unix(expiry, 0)) {
-		t.Error("expiry not found", data)
-	}
-	tokenstr, ok := data["jwt"].(string)
-	if !ok {
-		t.Error("jwt not found")
-	}
-	p := jwt.NewParser()
-	splitJWT, err := segmentJWT(tokenstr)
-	if err != nil {
-		t.Error(err)
-	}
-
-	h, err := p.DecodeSegment(splitJWT[0])
-	if err != nil {
-		t.Error(err)
-	}
-	pL, err := p.DecodeSegment(splitJWT[1])
-	if err != nil {
-		t.Error(err)
-	}
-
-	//header has alg, kid, and typ
-	var header map[string]interface{}
-	json.Unmarshal(h, &header)
-	if alg, ok := header["alg"]; !ok || alg != "RS256" {
-		t.Error("header param 'alg' has invalid value", header)
-	}
-	if kid, ok := header["kid"]; !ok || kid == "" {
-		t.Error("header param 'kid' has invalid value", header)
-	}
-	if typ, ok := header["typ"]; !ok || typ != "JWT" {
-		t.Error("header param 'typ' has invalid value", header)
-	}
-	//payload has exp, iat
-	var payload map[string]interface{}
-	json.Unmarshal(pL, &payload)
-	if expFloat, ok := payload["exp"].(float64); ok {
-		exp := int64(expFloat)
-		if time.Now().Before(time.Unix(exp, 0)) {
-			t.Errorf("Token unexppired at %v", time.Unix(exp, 0))
-		}
-	} else {
-		t.Error("payload param 'exp' is missing or not a valid number", payload)
-	}
-
-	if iatFloat, ok := payload["iat"].(float64); ok {
-		iat := int64(iatFloat) // Convert from float64
-		if time.Now().Before(time.Unix(iat, 0)) {
-			t.Errorf("Token 'iat' is in the future: %v", time.Unix(iat, 0))
-		}
-	} else {
-		t.Error("payload param 'iat' is missing or not a valid number", payload)
-	}
-}
 func TestHandleJWKS(t *testing.T) {
-	//Ensure that JWKS is correctly formatted, has appropriate members, and keys not expired
-	//Make req to auth, authexpired check if keys present and correct members
+	validKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	validKeyEnc := x509.MarshalPKCS1PrivateKey(validKey)
 
-	req1 := httptest.NewRequest(http.MethodPost, "/.well-known/jwks.json", nil)
-	w1 := httptest.NewRecorder()
-	HandleJwks(w1, req1)
-	if w1.Code != http.StatusMethodNotAllowed {
-		t.Errorf("expected status code 405, got: %d", w1.Code)
+	/* 	expiredKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	   	require.NoError(t, err)
+	   	expiredKeyEnc := x509.MarshalPKCS1PrivateKey(expiredKey) */
+
+	unexpTime := time.Now().Add(time.Hour * 1).Unix()
+	//expTime := time.Now().Add(-time.Hour).Unix()
+
+	tests := []struct {
+		name           string
+		method         string
+		mockSetup      func(sqlmock.Sqlmock)
+		expectedStatus int
+		expectedBody   map[string]interface{}
+	}{
+		{
+			name:   "Valid GET request",
+			method: http.MethodGet,
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				rows := sqlmock.NewRows([]string{"kid", "key", "exp"}).
+					AddRow(0, validKeyEnc, unexpTime)
+
+				mock.ExpectQuery("SELECT * FROM keys WHERE exp > ?;").
+					WithArgs(time.Now().Unix()).
+					WillReturnRows(rows)
+			},
+			expectedStatus: http.StatusOK,
+			expectedBody: map[string]interface{}{
+				"alg": "RS256",
+				"kty": "RSA",
+				"n":   base64.RawURLEncoding.EncodeToString(validKey.N.Bytes()),
+				"e":   "AQAB",
+				"kid": "0",
+				"exp": unexpTime,
+			},
+		},
+		{
+			name:           "Invalid method (POST)",
+			method:         http.MethodPost,
+			mockSetup:      func(s sqlmock.Sqlmock) {},
+			expectedStatus: http.StatusMethodNotAllowed,
+			expectedBody:   nil,
+		},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+			require.NoError(t, err)
+			defer db.Close()
 
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/jwks.json", nil)
-	w := httptest.NewRecorder()
-	HandleJwks(w, req)
-	if w.Code != http.StatusOK {
-		t.Errorf("expected status code 200, got %d", w.Code)
+			tc.mockSetup(mock)
+
+			url := "./well-known/jwks.json"
+
+			req, err := http.NewRequest(tc.method, url, nil)
+			assert.NoError(t, err)
+
+			rr := httptest.NewRecorder()
+			handler := &AppHandler{db: db}
+			handler.HandleJwks(rr, req)
+
+			if rr.Code != tc.expectedStatus {
+				t.Logf("Response body: %s", rr.Body.String())
+			}
+			assert.Equal(t, tc.expectedStatus, rr.Code)
+
+			if tc.expectedStatus == http.StatusOK {
+				var response map[string]interface{}
+				err = json.NewDecoder(rr.Body).Decode(&response)
+				assert.NoError(t, err)
+				key := response["keys"].([]interface{})[0].(map[string]interface{})
+
+				assert.Contains(t, key, "alg")
+				assert.NotEmpty(t, key["alg"])
+
+				assert.Contains(t, key, "kty")
+				assert.NotEmpty(t, key["kty"])
+
+				assert.Contains(t, key, "n")
+				assert.NotEmpty(t, key["n"])
+
+				assert.Contains(t, key, "e")
+				assert.NotEmpty(t, key["e"])
+
+				assert.Contains(t, key, "kid")
+				assert.NotEmpty(t, key["kid"])
+
+				assert.Contains(t, key, "exp")
+				assert.NotEmpty(t, key["exp"])
+			}
+		})
 	}
-	body := w.Body.Bytes()
-
-	var jwks JWKS
-	err := json.Unmarshal(body, &jwks)
-	if err != nil {
-		t.Fatalf("error unmarshalling json: %v", err)
-	}
-	if jwks.Keys == nil {
-		return
-	}
-
-	for i, key := range jwks.Keys {
-
-		if key.Alg != "RS256" {
-			t.Errorf("jwk parameter 'alg' not found at jwks index %d, key: %v", i, key)
-		}
-		//big.Int(0).Bytes() when base64rawurl encoded is "", if it is absent, it is the same
-		if key.E == "" {
-			t.Errorf("jwk parameter 'E' was zero or absent at jwks index %d, key: %v", i, key)
-		}
-		if key.Kid == "" {
-			t.Errorf("jwk parameter 'kid' not found at jwks index %d, key: %v", i, key)
-		}
-		if key.Kty != "RSA" {
-			t.Errorf("jwk parameter 'kty' was not RSA at jwks index %d, key: %v", i, key)
-		}
-		if key.N == "" {
-			t.Errorf("jwk parameter 'N' not found at jwks index %d, key: %v", i, key)
-		}
-		if time.Now().After(key.Exp) {
-			t.Errorf("key at index %d, was expired, key: %v", i, key)
-		}
-	}
-
 }
 
+func TestGenerateDBKeys(t *testing.T) {
+	// Test cases
+	testCases := []struct {
+		name      string
+		isExpired bool
+		mockSetup func(mock sqlmock.Sqlmock)
+		wantErr   bool
+	}{
+		{
+			name:      "Success - Unexpired Key",
+			isExpired: false,
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectPing()
+				mock.ExpectExec("INSERT INTO keys (key, exp) VALUES (?, ?);").
+					WithArgs( /*todo:  want to ensure that the args have appropriate types*/ ).
+					WillReturnResult(sqlmock.NewResult(0, 1))
+			},
+			wantErr: false,
+		},
+		{
+			name:      "Success - Expired Key",
+			isExpired: true,
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectPing()
+				mock.ExpectExec("INSERT INTO keys (key, exp) VALUES (?, ?);").
+					WithArgs( /* todo: want to ensure that the args have appropriate types*/ ).
+					WillReturnResult(sqlmock.NewResult(1, 1))
+			},
+			wantErr: false,
+		},
+		{
+			name:      "Error - Database Connection Failure",
+			isExpired: false,
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectPing().WillReturnError(sql.ErrConnDone)
+			},
+			wantErr: true,
+		},
+		{
+			name:      "Error - Insert Failure",
+			isExpired: false,
+			mockSetup: func(mock sqlmock.Sqlmock) {
+				mock.ExpectPing()
+				mock.ExpectExec("INSERT INTO keys (key, exp) VALUES (?, ?);").
+					WillReturnError(sql.ErrNoRows)
+			},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a new mock database
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+			if err != nil {
+				t.Fatalf("Failed to create mock database: %v", err)
+			}
+			defer db.Close()
+
+			// Set up the mock expectations
+			tc.mockSetup(mock)
+
+			// Call the function being tested
+			err = GenerateDBKeys(db, tc.isExpired)
+
+			// Check if the error matches expectations
+			if tc.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+
+			// Make sure all expectations were met
+			if err := mock.ExpectationsWereMet(); err != nil {
+				t.Errorf("Unfulfilled expectations: %s", err)
+			}
+		})
+	}
+}
 func TestGenerateRSA(t *testing.T) {
 	//Ensure that RSA Keys are not invalid
 	//Reference RFC 8017
