@@ -269,7 +269,6 @@ func TestGenerateDBKeys(t *testing.T) {
 			mockSetup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectPing()
 				mock.ExpectExec("INSERT INTO keys (key, exp) VALUES (?, ?);").
-					WithArgs( /*todo:  want to ensure that the args have appropriate types*/ ).
 					WillReturnResult(sqlmock.NewResult(0, 1))
 			},
 			wantErr: false,
@@ -280,7 +279,6 @@ func TestGenerateDBKeys(t *testing.T) {
 			mockSetup: func(mock sqlmock.Sqlmock) {
 				mock.ExpectPing()
 				mock.ExpectExec("INSERT INTO keys (key, exp) VALUES (?, ?);").
-					WithArgs( /* todo: want to ensure that the args have appropriate types*/ ).
 					WillReturnResult(sqlmock.NewResult(1, 1))
 			},
 			wantErr: false,
@@ -308,7 +306,7 @@ func TestGenerateDBKeys(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Create a new mock database
-			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual))
+			db, mock, err := sqlmock.New(sqlmock.QueryMatcherOption(sqlmock.QueryMatcherEqual), sqlmock.MonitorPingsOption(true))
 			if err != nil {
 				t.Fatalf("Failed to create mock database: %v", err)
 			}
