@@ -2,7 +2,8 @@
 
 ![Screenshot 2025-03-18 141405](https://github.com/user-attachments/assets/c6d655a3-9fcd-4fba-bb9d-3a4bcb00e28f)
 
-![Screenshot 2025-02-14 131918](https://github.com/user-attachments/assets/1061e709-8b6b-44fb-86b4-9515c8a3d767)
+![Screenshot 2025-03-23 014827](https://github.com/user-attachments/assets/d1940517-2629-4be4-829f-da1318827dbd)
+
 
 ## How to build:
 
