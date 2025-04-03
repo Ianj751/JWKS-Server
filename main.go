@@ -25,11 +25,36 @@ func main() {
 		log.Fatal("error establishing connection to database: ", err)
 	}
 
-	/* Initialize Table */
-	_, err = db.Exec("CREATE TABLE IF NOT EXISTS `keys`( `kid` INTEGER PRIMARY KEY AUTOINCREMENT, `key` BLOB NOT NULL, `exp` INTEGER NOT NULL);")
+	/* Initialize Keys Table */
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS keys( 
+						kid INTEGER PRIMARY KEY AUTOINCREMENT, 
+						key BLOB NOT NULL, 
+						exp INTEGER NOT NULL);`)
 	if err != nil {
 		log.Fatal("error creating table: ", err)
 	}
+	/* Initialize Users Table */
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS users(
+						id INTEGER PRIMARY KEY AUTOINCREMENT, 
+						username TEXT NOT NULL UNIQUE, 
+						password_hash TEXT NOT NULL, 
+						email TEXT UNIQUE,
+						date_registered TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+						last_login TIMESTAMP );`)
+	if err != nil {
+		log.Fatal("error creating table: ", err)
+	}
+	/* Initialize Auth_logs table */
+	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS auth_logs(
+    					id INTEGER PRIMARY KEY AUTOINCREMENT,
+    					request_ip TEXT NOT NULL,
+    					request_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    					user_id INTEGER,  
+    					FOREIGN KEY(user_id) REFERENCES users(id));`)
+	if err != nil {
+		log.Fatal("error creating table: ", err)
+	}
+
 	/*
 		Generate 2 private Keys, one expired and one non expired and save them to the DB.
 	*/
