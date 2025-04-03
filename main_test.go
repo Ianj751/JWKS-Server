@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/Ianj751/handlers"
+	"github.com/Ianj751/helpers"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +123,7 @@ func TestHandleAuth(t *testing.T) {
 			rr := httptest.NewRecorder()
 
 			// Create the handler with our mock DB
-			handler := &AppHandler{db: db}
+			handler := &handlers.AppHandler{Db: db}
 
 			// Call the handler
 			handler.HandleAuth(rr, req)
@@ -219,7 +221,7 @@ func TestHandleJWKS(t *testing.T) {
 			assert.NoError(t, err)
 
 			rr := httptest.NewRecorder()
-			handler := &AppHandler{db: db}
+			handler := &handlers.AppHandler{Db: db}
 			handler.HandleJwks(rr, req)
 
 			if rr.Code != tc.expectedStatus {
@@ -316,7 +318,7 @@ func TestGenerateDBKeys(t *testing.T) {
 			tc.mockSetup(mock)
 
 			// Call the function being tested
-			err = GenerateDBKeys(db, tc.isExpired)
+			err = helpers.GenerateDBKeys(db, tc.isExpired)
 
 			// Check if the error matches expectations
 			if tc.wantErr {
@@ -335,7 +337,7 @@ func TestGenerateDBKeys(t *testing.T) {
 func TestGenerateRSA(t *testing.T) {
 	//Ensure that RSA Keys are not invalid
 	//Reference RFC 8017
-	key, err := generateRSAKeys()
+	key, err := helpers.GenerateRSAKeys()
 	if err != nil || key == nil {
 		t.Fatal("error generating rsa keys: ", err)
 	}
@@ -369,4 +371,9 @@ func TestGenerateRSA(t *testing.T) {
 		t.Errorf("key validation failed: %v", err)
 	}
 
+}
+
+func TestMain(m *testing.M) {
+	// call flag.Parse() here if TestMain uses flags
+	m.Run()
 }
