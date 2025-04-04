@@ -19,6 +19,10 @@ func GetDBKey(db *sql.DB, isExpired bool) (DBKeys, error) {
 		if err := rows.Scan(&privs.Kid, &privs.Key, &privs.Exp); err != nil {
 			return DBKeys{}, fmt.Errorf("error copying rows into values: %w", err)
 		}
+		privs.Key, err = DecodeAESPK(privs.Key)
+		if err != nil {
+			return DBKeys{}, fmt.Errorf("error decoding private key from database: %w", err)
+		}
 		privateKeys = append(privateKeys, privs)
 	}
 	if err := rows.Err(); err != nil {

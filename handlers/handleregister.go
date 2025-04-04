@@ -74,7 +74,7 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 			last_login TIMESTAMP
 		);
 	*/
-	h.Db.Exec("INSERT INTO users (username, password_hash, email, last_login)VALUES(?, ?, ?, ?)", user, strPass, email, time.Now().Unix())
+	h.Db.Exec("INSERT INTO users (username, password_hash, email, last_login)VALUES(?, ?, ?, ?)", user, strPass, email, time.Now())
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(

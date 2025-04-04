@@ -66,7 +66,7 @@ func main() {
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	/* Shout out to claude for this solution */
+
 	handler := &handlers.AppHandler{Db: db}
 
 	http.HandleFunc("/auth", handler.HandleAuth)

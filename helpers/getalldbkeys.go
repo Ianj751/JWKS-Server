@@ -19,6 +19,11 @@ func GetAllDBKeys(db *sql.DB) ([]DBKeys, error) {
 		if err := rows.Scan(&privs.Kid, &privs.Key, &privs.Exp); err != nil {
 			return nil, fmt.Errorf("error copying rows into values: %w", err)
 		}
+
+		privs.Key, err = DecodeAESPK(privs.Key)
+		if err != nil {
+			return nil, fmt.Errorf("error decoding private key from database: %w", err)
+		}
 		privateKeys = append(privateKeys, privs)
 	}
 	if err := rows.Err(); err != nil {
