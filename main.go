@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"log"
 	"net/http"
@@ -11,6 +12,11 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+/*
+* TODO List:
+*	- RateLimiter
+*	- Store and retrieve keys from env
+ */
 func main() {
 	_, err := os.Create("./totally_not_my_privateKeys.db")
 	if err != nil {
@@ -55,19 +61,25 @@ func main() {
 		log.Fatal("error creating table: ", err)
 	}
 
+	key := make([]byte, 32)
+
+	if _, err := rand.Reader.Read(key); err != nil {
+		log.Fatal("error generating encryption key: %w", err)
+	}
+
 	/*
 		Generate 2 private Keys, one expired and one non expired and save them to the DB.
 	*/
-	err = helpers.GenerateDBKeys(db, true) //expired key
+	err = helpers.GenerateDBKeys(db, true, key) //expired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	helpers.GenerateDBKeys(db, false) //unexpired key
+	helpers.GenerateDBKeys(db, false, key) //unexpired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
 
-	handler := &handlers.AppHandler{Db: db}
+	handler := &handlers.AppHandler{Db: db, Key: key}
 
 	http.HandleFunc("/auth", handler.HandleAuth)
 	http.HandleFunc("/.well-known/jwks.json", handler.HandleJwks)

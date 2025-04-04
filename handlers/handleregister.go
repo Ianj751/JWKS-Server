@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -56,13 +57,12 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		keyLength:   32,
 	}
 	password := uuid.New()
-	byteHash, err := generateFromPassword(password.String(), p)
+	hash, err := generateFromPassword(password.String(), p)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error hashing password: %v", err), http.StatusInternalServerError)
 		return
 	}
 	//Assuming this needs to be a string based on the type of the column
-	strPass := fmt.Sprintf("%X", byteHash)
 
 	/*
 		CREATE TABLE IF NOT EXISTS users(
@@ -74,7 +74,7 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 			last_login TIMESTAMP
 		);
 	*/
-	h.Db.Exec("INSERT INTO users (username, password_hash, email, last_login)VALUES(?, ?, ?, ?)", user, strPass, email, time.Now())
+	h.Db.Exec("INSERT INTO users (username, password_hash, email, last_login)VALUES(?, ?, ?, ?)", user, hash, email, time.Now())
 
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(
@@ -84,16 +84,20 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func generateFromPassword(password string, p arg2params) (hash []byte, err error) {
+func generateFromPassword(password string, p arg2params) (string, error) {
 
 	salt, err := generateRandomBytes(p.saltLength)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
-	hash = argon2.IDKey([]byte(password), salt, p.iterations, p.memory, p.parallelism, p.keyLength)
+	hash := argon2.IDKey([]byte(password), salt, p.iterations, p.memory, p.parallelism, p.keyLength)
 
-	return hash, nil
+	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
+	b64Hash := base64.RawStdEncoding.EncodeToString(hash)
+
+	encodedHash := fmt.Sprintf("$argon2id$v=%d$m=%d,t=%d,p=%d$%s$%s", argon2.Version, p.memory, p.iterations, p.parallelism, b64Salt, b64Hash)
+	return encodedHash, nil
 }
 
 func generateRandomBytes(n uint32) ([]byte, error) {

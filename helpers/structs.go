@@ -36,19 +36,3 @@ func NewJWK(public rsa.PublicKey, kid int, exp int64) JWK {
 		time.Unix(exp, 0), //expiration date, set for an hour from now
 	}
 }
-
-type Users struct {
-	ID              int
-	Username        string
-	Password_hash   string
-	Email           string
-	Date_registered int64
-	Last_login      int64
-}
-
-type Auth_logs struct {
-	ID                int
-	Request_ip        string
-	Request_timestamp int64
-	User_id           int
-}

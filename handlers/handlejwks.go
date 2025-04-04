@@ -16,7 +16,7 @@ func (h *AppHandler) HandleJwks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	dbkeys, err := helpers.GetAllDBKeys(h.Db)
+	dbkeys, err := helpers.GetAllDBKeys(h.Db, h.Key)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("error retrieving keys from database: %v", err), http.StatusInternalServerError)
 		return

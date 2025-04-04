@@ -6,14 +6,12 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"database/sql"
-	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 	"time"
 )
 
-func GenerateDBKeys(db *sql.DB, isExpired bool) error {
+func GenerateDBKeys(db *sql.DB, isExpired bool, key []byte) error {
 	if db == nil {
 		return fmt.Errorf("database connection was nil")
 	}
@@ -29,7 +27,7 @@ func GenerateDBKeys(db *sql.DB, isExpired bool) error {
 		return fmt.Errorf("error generating rsa keys: %w", err)
 	}
 
-	aesPKSC1, err := aesEncrypt(x509.MarshalPKCS1PrivateKey(privateKey))
+	aesPKSC1, err := aesEncrypt(x509.MarshalPKCS1PrivateKey(privateKey), key)
 	if err != nil {
 		return fmt.Errorf("error encrypting private key: %w", err)
 	}
@@ -40,16 +38,7 @@ func GenerateDBKeys(db *sql.DB, isExpired bool) error {
 	return nil
 }
 
-func aesEncrypt(data []byte) ([]byte, error) {
-	//TODO: Replace with getting env:NOT_MY_KEY
-	key := make([]byte, 32)
-
-	if _, err := rand.Reader.Read(key); err != nil {
-		return nil, fmt.Errorf("error generating encryption key: %w", err)
-	}
-	//Not 100% sure how this is supposed to work
-	//On retrieval of keys from database, revert key to byte, decode private key member of dbkeys using key
-	os.Setenv("NOT_MY_KEY", hex.EncodeToString(key))
+func aesEncrypt(data []byte, key []byte) ([]byte, error) {
 
 	block, err := aes.NewCipher(key)
 	if err != nil {

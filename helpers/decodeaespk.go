@@ -3,24 +3,13 @@ package helpers
 import (
 	"crypto/aes"
 	"crypto/cipher"
-	"encoding/hex"
 	"fmt"
-	"os"
 )
 
 /* This function's sole purpose is to decode the private keys retrieved from the database */
-func DecodeAESPK(data []byte) ([]byte, error) {
-	strkey := os.Getenv("NOT_MY_KEY")
-	if strkey == "" {
-		return nil, fmt.Errorf("error retrieving AES key: environment variable 'NOT_MY_KEY' was empty")
-	}
+func DecodeAESPK(data []byte, key []byte) ([]byte, error) {
 
-	bytekey, err := hex.DecodeString(strkey)
-	if err != nil {
-		return nil, fmt.Errorf("error decoding AES key from env variable: %w", err)
-	}
-
-	c, err := aes.NewCipher(bytekey)
+	c, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("error creating cipher block: %w", err)
 	}

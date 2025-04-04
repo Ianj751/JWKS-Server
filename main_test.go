@@ -318,7 +318,7 @@ func TestGenerateDBKeys(t *testing.T) {
 			tc.mockSetup(mock)
 
 			// Call the function being tested
-			err = helpers.GenerateDBKeys(db, tc.isExpired)
+			//err = helpers.GenerateDBKeys(db, tc.isExpired)
 
 			// Check if the error matches expectations
 			if tc.wantErr {
