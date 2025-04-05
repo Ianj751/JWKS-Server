@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func GetDBKey(db *sql.DB, isExpired bool, key []byte) (DBKeys, error) {
+func GetDBKey(db *sql.DB, isExpired bool) (DBKeys, error) {
 	privateKeys := []DBKeys{}
 	rows, err := db.Query("SELECT * FROM keys;")
 	if err != nil {
@@ -19,7 +19,7 @@ func GetDBKey(db *sql.DB, isExpired bool, key []byte) (DBKeys, error) {
 		if err := rows.Scan(&privs.Kid, &privs.Key, &privs.Exp); err != nil {
 			return DBKeys{}, fmt.Errorf("error copying rows into values: %w", err)
 		}
-		privs.Key, err = DecodeAESPK(privs.Key, key)
+		privs.Key, err = DecodeAESPK(privs.Key)
 		if err != nil {
 			return DBKeys{}, fmt.Errorf("error decoding private key from database: %w", err)
 		}

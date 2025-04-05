@@ -6,12 +6,14 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"os"
 	"time"
 )
 
-func GenerateDBKeys(db *sql.DB, isExpired bool, key []byte) error {
+func GenerateDBKeys(db *sql.DB, isExpired bool) error {
 	if db == nil {
 		return fmt.Errorf("database connection was nil")
 	}
@@ -27,7 +29,7 @@ func GenerateDBKeys(db *sql.DB, isExpired bool, key []byte) error {
 		return fmt.Errorf("error generating rsa keys: %w", err)
 	}
 
-	aesPKSC1, err := aesEncrypt(x509.MarshalPKCS1PrivateKey(privateKey), key)
+	aesPKSC1, err := aesEncrypt(x509.MarshalPKCS1PrivateKey(privateKey))
 	if err != nil {
 		return fmt.Errorf("error encrypting private key: %w", err)
 	}
@@ -38,8 +40,15 @@ func GenerateDBKeys(db *sql.DB, isExpired bool, key []byte) error {
 	return nil
 }
 
-func aesEncrypt(data []byte, key []byte) ([]byte, error) {
-
+func aesEncrypt(data []byte) ([]byte, error) {
+	strkey := os.Getenv("NOT_MY_KEY")
+	if strkey == "" {
+		return nil, fmt.Errorf("error retrieving environment variable 'NOT_MY_KEY': environment variable was not set")
+	}
+	key, err := hex.DecodeString(strkey)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding enviroment variable string: %w", err)
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("error creating aes block cipher: %w", err)

@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
@@ -66,20 +67,21 @@ func main() {
 	if _, err := rand.Reader.Read(key); err != nil {
 		log.Fatal("error generating encryption key: %w", err)
 	}
+	os.Setenv("NOT_MY_KEY", hex.EncodeToString(key))
 
 	/*
 		Generate 2 private Keys, one expired and one non expired and save them to the DB.
 	*/
-	err = helpers.GenerateDBKeys(db, true, key) //expired key
+	err = helpers.GenerateDBKeys(db, true) //expired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	helpers.GenerateDBKeys(db, false, key) //unexpired key
+	helpers.GenerateDBKeys(db, false) //unexpired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
 
-	handler := &handlers.AppHandler{Db: db, Key: key}
+	handler := &handlers.AppHandler{Db: db}
 
 	http.HandleFunc("/auth", handler.HandleAuth)
 	http.HandleFunc("/.well-known/jwks.json", handler.HandleJwks)

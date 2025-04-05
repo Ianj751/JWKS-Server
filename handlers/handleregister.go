@@ -13,7 +13,7 @@ import (
 	"golang.org/x/crypto/argon2"
 )
 
-type arg2params struct {
+type Arg2params struct {
 	memory      uint32
 	iterations  uint32
 	parallelism uint8
@@ -49,7 +49,7 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := arg2params{
+	p := Arg2params{
 		memory:      64 * 1024,
 		iterations:  3,
 		parallelism: 2,
@@ -84,7 +84,7 @@ func (h *AppHandler) HandleRegister(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func generateFromPassword(password string, p arg2params) (string, error) {
+func generateFromPassword(password string, p Arg2params) (string, error) {
 
 	salt, err := generateRandomBytes(p.saltLength)
 	if err != nil {
