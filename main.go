@@ -10,7 +10,9 @@ import (
 
 	"github.com/Ianj751/handlers"
 	"github.com/Ianj751/helpers"
+	"github.com/Ianj751/ratelimiter"
 	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -83,10 +85,15 @@ func main() {
 
 	handler := &handlers.AppHandler{Db: db}
 
-	http.HandleFunc("/auth", handler.HandleAuth)
-	http.HandleFunc("/.well-known/jwks.json", handler.HandleJwks)
-	http.HandleFunc("/register", handler.HandleRegister)
+	mux := http.NewServeMux()
 
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	mux.HandleFunc("/auth", handler.HandleAuth)
+	mux.HandleFunc("/.well-known/jwks.json", handler.HandleJwks)
+	mux.HandleFunc("/register", handler.HandleRegister)
+
+	handlerate := ratelimiter.RateLimiterMiddleware(mux, rate.Limit(1), 10)
+
+	log.Println("Server started on :8080")
+	log.Fatal(http.ListenAndServe(":8080", handlerate))
 
 }

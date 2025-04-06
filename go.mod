@@ -6,7 +6,10 @@ require github.com/golang-jwt/jwt/v5 v5.2.1
 
 require github.com/mattn/go-sqlite3 v1.14.24
 
-require golang.org/x/sys v0.31.0 // indirect
+require (
+	golang.org/x/sys v0.31.0 // indirect
+	golang.org/x/time v0.11.0 // indirect
+)
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2 // indirect
