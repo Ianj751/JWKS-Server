@@ -30,7 +30,7 @@ func DecodeAESPK(data []byte) ([]byte, error) {
 
 	nonceSize := gcm.NonceSize()
 	if len(data) < nonceSize {
-		return nil, fmt.Errorf("error verifying nonce size: length of data was less than nonce")
+		return nil, fmt.Errorf("error verifying nonce size: length of data(%d) was less than nonce(%d)", len(data), nonceSize)
 	}
 
 	nonce, data := data[:nonceSize], data[nonceSize:]

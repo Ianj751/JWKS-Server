@@ -15,11 +15,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-/*
-* TODO List:
-*	- RateLimiter
-*	- Store and retrieve keys from env
- */
 func main() {
 	_, err := os.Create("./totally_not_my_privateKeys.db")
 	if err != nil {
@@ -78,7 +73,7 @@ func main() {
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
-	helpers.GenerateDBKeys(db, false) //unexpired key
+	err = helpers.GenerateDBKeys(db, false) //unexpired key
 	if err != nil {
 		log.Fatal("error creating keys for database: ", err)
 	}
