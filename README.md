@@ -3,8 +3,7 @@
 ![Screenshot 2025-04-05 190637](https://github.com/user-attachments/assets/a307b62e-be2f-40b7-affd-6dd0552ffed8)
 
 
-![Screenshot 2025-03-23 014827](https://github.com/user-attachments/assets/d1940517-2629-4be4-829f-da1318827dbd)
-
+![Screenshot 2025-04-27 203753](https://github.com/user-attachments/assets/7fbdd369-754e-4c15-8b9a-6a3ea81074a6)
 
 ## How to build:
 
